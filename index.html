@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="app-version" content="1.0.0">
+<title>二维码及库位优化工具</title>
+</head>
+<body>
+
+<div id="messageArea"></div>
+
+<div class="container">
+    <h1>
+        <span class="title-group">
+            二维码及库位优化工具
+            <span class="subtitle"></span>
+        </span>
+        <span id="headerActions">
+            <button id="globalHelpBtn" class="btn help-btn"></button>
+        </span>
+    </h1>
+    <div id="moduleTabs" class="tabs"></div>
+</div>
+
+<div id="commonModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="modalTitle"></h2>
+            <button id="modalCloseBtn" class="close-btn" title="关闭">×</button>
+        </div>
+        <div class="modal-body">
+            <div id="modalBody"></div>
+            <div id="modalExtraControls"></div>
+        </div>
+    </div>
+</div>
+
+<script src="js/module/Core.js"></script>
+<script src="js/module/MultiQRCodeModule.js"></script>
+<script>
+    const app = new Core();
+    app.inlineModules.push(MultiQRCodeModule);
+    app.init();
+</script>
+</body>
+</html>
