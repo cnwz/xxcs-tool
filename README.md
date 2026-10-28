@@ -46,3 +46,16 @@ src/
 ## 数据安全
 
 本工具不收集、不存储、不传输任何用户数据。所有计算在浏览器本地完成。
+
+## 致谢
+
+- deepseek：参与了代码的审计与改进。
+
+## 许可
+
+本项目采用 Unlicense 协议，释放到公共领域。
+
+> This is free and unencumbered software released into the public domain.
+> See [LICENSE](LICENSE) for details.
+
+简言之：你可以随意使用、修改、分发，作者不保留任何权利，也不承担任何义务。

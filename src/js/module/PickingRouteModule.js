@@ -1,28 +1,33 @@
 /**
  * @description 分拣动线计算模块
- * @author me@cnwz.me
+ * @author ls_wuzhen20
  * @since 2026-04-26
- * @lastupdate 2026-09-16
- * @version 1.0.0
- * @wiki https://gitee.com/{repo}/wikis/模块示例/分拣动线计算
- * @rules ./rules/PickingRouteModule.md
+ * @lastupdate 2026-09-21
+ * @version 2.0.0
+ * @wiki https://gitee.com/cnwz/xxcs-tool/wikis/开发/PickingRouteModule.md
+ * @license Unlicense
  * @security 本文件不收集、不存储、不传输任何用户数据。所有计算在浏览器本地完成。
  */
 class PickingRouteModule {
     constructor(app) {
         this.app = app;
         this.title = PR_TEXT.title;
-        this.ver = '1.0.0';
-        this.lastupdate = '2026-09-16';
+        this.ver = '2.0.0';
+        this.lastupdate = '2026-09-21';
         this.iconName = 'arrow-right-circle';
         this.introText = PR_TEXT.introText;
         this.helpDescription = PR_TEXT.helpDescription;
     }
 
+    /** 注入模块样式 */
     injectStyles() {
         this.app.injectStyle(this.id, PR_TEXT.styles);
     }
 
+    /**
+     * 校验仓库名称输入
+     * @returns {boolean}
+     */
     validateWarehouse() {
         let warehouse = document.getElementById('prWarehouseName').value;
         const pattern = (this.app.validations && this.app.validations.warehousePattern)
@@ -36,6 +41,11 @@ class PickingRouteModule {
         }
     }
 
+    /**
+     * 解析货架设置文本，计算优先级
+     * @param {string[]} lines
+     * @returns {{shelfData:Array<Object>,duplicatesRemoved:string[]}}
+     */
     processShelfData(lines) {
         let shelfData = [];
         let shelfMap = new Map();
@@ -93,7 +103,14 @@ class PickingRouteModule {
         return { shelfData, duplicatesRemoved };
     }
 
+    /**
+     * 解析库位列表，匹配货架优先级
+     * @param {string[]} lines
+     * @returns {{locationData:Array<Object>,duplicatesRemoved:string[]}}
+     */
     processLocationData(lines) {
+        // 库位码规则：段 4 是 DD 或 2 位数字，段 5 是 2 位数字。
+        // 与 Core.validateLocationCode / QRPrintModule 保持一致。
         let locationData = [];
         let locationSet = new Set();
         let duplicatesRemoved = [];
@@ -104,7 +121,7 @@ class PickingRouteModule {
                 return;
             }
             locationSet.add(location);
-            let locationRegex = /^([A-Z0-9]{2})-(\d{2})-(\d{2})-([0-9]{2}|DD)-(\d+)$/;
+            let locationRegex = /^([A-Z0-9]{2})-(\d{2})-(\d{2})-([0-9]{2}|DD)-(\d{2})$/;
             let match = location.match(locationRegex);
             if (!match) {
                 throw new Error(PR_TEXT.err_locationFormat.replace('{n}', index + 1).replace('{loc}', location));
@@ -134,6 +151,12 @@ class PickingRouteModule {
         return { locationData, duplicatesRemoved };
     }
 
+    /**
+     * 渲染货架优先级表格
+     * @param {Array<Object>} data
+     * @param {HTMLElement} container
+     * @param {string} label
+     */
     createPriorityTable(data, container, label) {
         let table = document.createElement("table");
         let thead = document.createElement("thead");
@@ -161,11 +184,16 @@ class PickingRouteModule {
         container.appendChild(table);
     }
 
+    /**
+     * 渲染库位优先级表格
+     * @param {Array<Object>} data
+     * @param {HTMLElement} container
+     */
     createLocationPriorityTable(data, container) {
         let table = document.createElement("table");
         let thead = document.createElement("thead");
         let headerRow = document.createElement("tr");
-        PR_TEXT.locationTableHeaders.forEach(h => {
+        CORE_HEADERS.locationChange.forEach(h => {
             let th = document.createElement("th");
             th.textContent = h;
             headerRow.appendChild(th);
@@ -181,7 +209,7 @@ class PickingRouteModule {
             let td2 = document.createElement("td");
             td2.textContent = item.locationCode;
             tr.appendChild(td2);
-            for (let i = 0; i < 4; i++) tr.appendChild(document.createElement("td"));
+            for (let i = 0; i < 3; i++) tr.appendChild(document.createElement("td"));
             let td6 = document.createElement("td");
             td6.textContent = item.priority;
             tr.appendChild(td6);
@@ -192,6 +220,7 @@ class PickingRouteModule {
         container.appendChild(table);
     }
 
+    /** 提交货架设置，生成优先级映射 */
     submitShelf() {
         let text = document.getElementById("prText1").value;
         let container = document.getElementById("table1-container");
@@ -224,6 +253,7 @@ class PickingRouteModule {
         }
     }
 
+    /** 提交库位列表，匹配优先级 */
     submitLocation() {
         let locationText = document.getElementById("prText2").value;
         let shelfText = document.getElementById("prText1").value;
@@ -263,6 +293,10 @@ class PickingRouteModule {
         }
     }
 
+    /**
+     * 切换内层 tab
+     * @param {number} index
+     */
     switchPriorityTab(index) {
         const panel = document.getElementById(`panel-${this.id}`);
         if (!panel) return;
@@ -272,6 +306,10 @@ class PickingRouteModule {
         });
     }
 
+    /**
+     * 绑定面板事件
+     * @param {HTMLElement} panel
+     */
     bindEvents(panel) {
         panel.querySelector('#prSubmitShelfBtn')?.addEventListener('click', () => this.submitShelf());
         panel.querySelector('#prSubmitLocationBtn')?.addEventListener('click', () => this.submitLocation());
@@ -284,6 +322,9 @@ class PickingRouteModule {
         });
     }
 
+    // ==================== UI ====================
+
+    /** 渲染模块面板 */
     renderPanel(panel) {
         this.injectStyles();
         panel.innerHTML = `
@@ -331,9 +372,12 @@ class PickingRouteModule {
             </div>
         `;
         this.bindEvents(panel);
+        this.validateWarehouse();
         this.app._log(this.title + '加载成功');
     }
 }
+
+// ==================== 文案 ====================
 
 const PR_TEXT = {
     title: '分拣动线计算',
@@ -359,7 +403,6 @@ const PR_TEXT = {
 
     th_shelfName: '货架名称',
     th_priority: '优先级',
-    locationTableHeaders: ['仓库名称', '库位号', '名称', '作为补入库位', '作为补出库位', '分拣排序', '上架排序', '逻辑区名称', '单独打包分区编号', '库位规格名称', '库位BAND', '批次码库位', '常温短保品库位'],
 
     msg_enterShelfData: '请输入货架设置数据',
     msg_noValidShelf: '无有效货架数据',
@@ -380,12 +423,12 @@ const PR_TEXT = {
     err_shelfFlag: '第{n}行：分割标志"{flag}"无效（仅支持=、x或空）',
     err_locationFormat: '第{n}行：库位"{loc}"格式错误（需XX-XX-XX-XX-XX）',
     err_locationPart4: '第{n}行：库位"{loc}"第4段无效（仅支持2位数字或DD）',
-    err_locationPart5: '第{n}行：库位"{loc}"第5段需为纯数字',
+    err_locationPart5: '第{n}行：库位"{loc}"第5段需为两位数字',
     err_locationDD: '第{n}行：库位"{loc}"第4段为DD时，第5段需为01',
     err_locationNoShelf: '第{n}行：库位"{loc}"对应货架"{shelf}"未在货架设置中找到',
 
-    styles: `.tabs-inner{margin-top:25px}
-.input-group{flex:1;min-width:320px}
-body.dark-mode .input-group textarea{background-color:#2c2c38 !important;border-color:#4a4a58 !important;color:#f0f0f0 !important}`
+        styles: `.tabs-inner{margin-top:var(--sp-6)}
+.input-group{flex:1;min-width:320px}`
 };
+
 window.PickingRouteModule = PickingRouteModule;

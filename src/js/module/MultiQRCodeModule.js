@@ -1,63 +1,82 @@
 /**
- * @file MultiQRCodeModule.js
  * @description 多二维码生成模块
  * @author ls_wuzhen20
  * @since 2025-06-30
- * @lastupdate 2026-09-16
- * @version 1.0.0
- * @wiki https://gitee.com/{repo}/wikis/模块示例/多二维码生成
- * @rules ./rules/MultiQRCodeModule.md
+ * @lastupdate 2026-09-23
+ * @version 2.0.0
+ * @wiki https://gitee.com/cnwz/xxcs-tool/wikis/开发/MultiQRCodeModule.md
+ * @license Unlicense
  * @security 本文件不收集、不存储、不传输任何用户数据。所有计算在浏览器本地完成。
  */
 class MultiQRCodeModule {
     constructor(app) {
         this.app = app;
         this.title = MQ_TEXT.title;
-        this.ver = '1.0.0';
-        this.lastupdate = '2026-09-16';
+        this.ver = '2.0.0';
+        this.lastupdate = '2026-09-23';
         this.iconName = 'qr-code';
         this.introText = MQ_TEXT.introText;
         this.helpDescription = MQ_TEXT.helpDescription;
+
         this._isComposing = false;
         this.productMap = new Map();
+        this._productMapMeta = null;
         this._loadingPromise = null;
         this._productMapLoadFailed = false;
-        this._isOldMap = false;
+
         this.defaultCommonLocations = ['YC-CW-CZ-00-00', 'YC-CW-FJ-00-00', 'YC-CW-RK-00-00', 'YC-CW-T0-00-00', 'YC-CW-XJ-00-00', 'YC-LC-BS-FC-00', 'YC-LC-BS-SP-00', 'YC-LC-CZ-00-00', 'YC-LC-FJ-00-00', 'YC-LC-RK-00-00', 'YC-LC-T0-00-00', 'YC-LC-XJ-00-00', 'YC-LD-BS-SP-00', 'YC-LD-BS-SP-00', 'YC-LD-CZ-00-00', 'YC-LD-FJ-00-00', 'YC-LD-RK-00-00', 'YC-LD-T0-00-00', 'YC-LD-XJ-00-00'];
         this.commonLocations = [...this.defaultCommonLocations];
         this._commonLocationsLoading = null;
         this._commonLocationsLoadFailed = false;
+
         this._searchMode = 'product';
         this._searchResults = [];
         this._selectedIndex = -1;
         this._searchTimer = null;
+
         this._loadProductMap().catch(err => this.app._log('productMap 加载失败：', err.message));
         this._loadCommonLocations().catch(err => this.app._log('commonLocations 加载失败：', err.message));
         this.app.loadLibrary('qrcode').catch(err => this.app._log('qrcode 库加载失败：', err.message));
     }
 
+    /** 注入模块样式 */
     injectStyles() {
         this.app.injectStyle(this.id, MQ_TEXT.styles);
     }
 
     // ==================== 数据加载 ====================
+
+    /**
+     * 加载商品库数据
+     * @returns {Promise<void>}
+     */
     async _loadProductMap() {
         if (this._loadingPromise) return this._loadingPromise;
         this._loadingPromise = (async () => {
             const localUrl = 'js/data/productMap.js';
-            const cdnUrl = `${this.app.cdnBase}main/js/data/productMap.js`;
 
-            if (window.productMapData === undefined) {
-                await this.app._loadScript(localUrl);
-            }
-            if (window.productMapData !== undefined) {
-                return this._applyProductMapData();
-            }
-
-            if (this.app.cdnAlive) {
-                await this.app._loadScript(cdnUrl);
+            if (this.app.fromCDN) {
+                const cdnUrl = `${this.app.cdnBase}main/js/data/productMap.js`;
+                await this.app._loadScript(cdnUrl, this.app.cdnTimeout);
                 if (window.productMapData !== undefined) {
                     return this._applyProductMapData();
+                }
+            } else {
+                if (window.productMapData === undefined) {
+                    await this.app._loadScript(localUrl, this.app.localTimeout);
+                }
+                if (window.productMapData !== undefined) {
+                    return this._applyProductMapData();
+                }
+
+                await this.app._handshake();
+
+                if (this.app.cdnAlive && this.app.releaseBatch !== 'dev') {
+                    const cdnUrl = `${this.app.cdnBase}${this.app.releaseBatch}/js/data/productMap.js`;
+                    await this.app._loadScript(cdnUrl, this.app.cdnTimeout);
+                    if (window.productMapData !== undefined) {
+                        return this._applyProductMapData();
+                    }
                 }
             }
 
@@ -68,69 +87,91 @@ class MultiQRCodeModule {
         return this._loadingPromise;
     }
 
+    /** 应用 window.productMapData 到内部 productMap */
     _applyProductMapData() {
         const data = window.productMapData;
-        if (Array.isArray(data)) {
-            this._parseArrayProductMap(data);
-            this._isOldMap = false;
-            this._productMapLoadFailed = false;
-            this._updateProductMapUI();
-            this._onInput();
-            return;
-        }
-        if (data instanceof Map) {
-            const firstValue = data.values().next().value;
-            if (typeof firstValue === 'string') {
-                this._isOldMap = true;
-                this.productMap = data;
-                this._productMapLoadFailed = false;
-                this._updateProductMapUI();
-                return;
-            }
+        if (!Array.isArray(data)) {
             this._productMapLoadFailed = true;
             this._updateProductMapUI();
             throw new Error(MQ_TEXT.err_unknownMapFormat);
         }
-        this._productMapLoadFailed = true;
+
+        if (window.productMapMeta && typeof window.productMapMeta === 'object') {
+            this._productMapMeta = {
+                snapshot: String(window.productMapMeta.snapshot || ''),
+                count: parseInt(window.productMapMeta.count, 10) || data.length,
+            };
+        } else {
+            this._productMapMeta = { snapshot: '', count: data.length };
+        }
+
+        try {
+            this._parseArrayProductMap(data);
+        } catch (e) {
+            this._productMapLoadFailed = true;
+            this._updateProductMapUI();
+            throw e;
+        }
+        this._productMapLoadFailed = false;
         this._updateProductMapUI();
-        throw new Error(MQ_TEXT.err_unknownMapFormat);
+        this._onInput();
     }
 
+    /**
+     * 解析三列数组为商品 Map
+     * @param {Array} arr
+     */
     _parseArrayProductMap(arr) {
         const map = new Map();
-        for (const item of arr) {
-            if (!Array.isArray(item) || item.length < 2) continue;
+        for (let i = 0; i < arr.length; i++) {
+            const item = arr[i];
+            if (!Array.isArray(item) || item.length < 3) {
+                throw new Error(MQ_TEXT.err_arrayNeedThreeCols.replace('{n}', i + 1));
+            }
             const code = String(item[0]).trim();
             const name = String(item[1]).trim();
             if (!code || !name) continue;
-            const flag = item.length > 2 ? String(item[2]).trim().toLowerCase() : '';
+            const flag = String(item[2]).trim().toLowerCase();
             const needFresh = (flag === '是' || flag === 'true');
             map.set(code, { name, needFresh });
         }
         this.productMap = map;
     }
 
+    /** 加载常用库位数据 */
     async _loadCommonLocations() {
         if (this._commonLocationsLoading) return this._commonLocationsLoading;
         this._commonLocationsLoading = (async () => {
             const localUrl = 'js/data/commonLocations.js';
-            const cdnUrl = `${this.app.cdnBase}main/js/data/commonLocations.js`;
 
-            if (window.commonLocationsData === undefined) {
-                await this.app._loadScript(localUrl);
-            }
-            if (Array.isArray(window.commonLocationsData)) {
-                this.commonLocations = window.commonLocationsData;
-                this._commonLocationsLoadFailed = false;
-                return;
-            }
-
-            if (this.app.cdnAlive) {
-                await this.app._loadScript(cdnUrl);
+            if (this.app.fromCDN) {
+                const cdnUrl = `${this.app.cdnBase}main/js/data/commonLocations.js`;
+                await this.app._loadScript(cdnUrl, this.app.cdnTimeout);
                 if (Array.isArray(window.commonLocationsData)) {
                     this.commonLocations = window.commonLocationsData;
                     this._commonLocationsLoadFailed = false;
                     return;
+                }
+            } else {
+                if (window.commonLocationsData === undefined) {
+                    await this.app._loadScript(localUrl, this.app.localTimeout);
+                }
+                if (Array.isArray(window.commonLocationsData)) {
+                    this.commonLocations = window.commonLocationsData;
+                    this._commonLocationsLoadFailed = false;
+                    return;
+                }
+
+                await this.app._handshake();
+
+                if (this.app.cdnAlive && this.app.releaseBatch !== 'dev') {
+                    const cdnUrl = `${this.app.cdnBase}${this.app.releaseBatch}/js/data/commonLocations.js`;
+                    await this.app._loadScript(cdnUrl, this.app.cdnTimeout);
+                    if (Array.isArray(window.commonLocationsData)) {
+                        this.commonLocations = window.commonLocationsData;
+                        this._commonLocationsLoadFailed = false;
+                        return;
+                    }
                 }
             }
 
@@ -141,22 +182,25 @@ class MultiQRCodeModule {
         return this._commonLocationsLoading;
     }
 
+    /** 更新商品库状态 UI */
     _updateProductMapUI() {
         const tag = document.getElementById('basicVersionTag');
         if (tag) tag.style.display = this._productMapLoadFailed ? '' : 'none';
+
         const statusSpan = document.getElementById('productMapStatus');
         if (statusSpan) {
             if (this._productMapLoadFailed) {
                 statusSpan.textContent = MQ_TEXT.status_mapLoadFailed;
-                statusSpan.style.color = '#f44336';
-            } else if (this._isOldMap) {
-                statusSpan.textContent = MQ_TEXT.status_oldMap;
-                statusSpan.style.color = '#999';
+                statusSpan.style.color = 'var(--danger)';
             } else {
-                statusSpan.textContent = MQ_TEXT.status_newMap;
-                statusSpan.style.color = '#4caf50';
+                const snapshot = (this._productMapMeta && this._productMapMeta.snapshot) || '';
+                statusSpan.textContent = snapshot
+                    ? `${MQ_TEXT.status_newMap}（${snapshot}）`
+                    : MQ_TEXT.status_newMap;
+                statusSpan.style.color = 'var(--success)';
             }
         }
+
         const checkboxGroup = document.getElementById('showProductInfoGroup');
         if (!checkboxGroup) return;
         if (this._productMapLoadFailed) {
@@ -171,26 +215,28 @@ class MultiQRCodeModule {
         }
     }
 
+    /**
+     * 外部设置商品库数据
+     * @param {Array} data
+     */
     setProductMap(data) {
-        if (Array.isArray(data)) {
-            this._parseArrayProductMap(data);
-            this._isOldMap = false;
-        } else if (data instanceof Map) {
-            const firstValue = data.values().next().value;
-            this._isOldMap = typeof firstValue === 'string';
-            this.productMap = data;
+        if (!Array.isArray(data)) {
+            throw new Error(MQ_TEXT.err_unknownMapFormat);
         }
+        this._parseArrayProductMap(data);
         this._productMapLoadFailed = false;
         this._updateProductMapUI();
         this._onInput();
     }
 
+    /**
+     * 追加单条商品映射
+     * @param {string} key
+     * @param {string} productName
+     * @param {boolean} [needFresh=false]
+     */
     addProductMapping(key, productName, needFresh = false) {
-        if (this._isOldMap) {
-            this.productMap.set(String(key), productName);
-        } else {
-            this.productMap.set(String(key), { name: productName, needFresh });
-        }
+        this.productMap.set(String(key), { name: productName, needFresh: needFresh === true });
         if (this._productMapLoadFailed) {
             this._productMapLoadFailed = false;
             this._updateProductMapUI();
@@ -199,6 +245,12 @@ class MultiQRCodeModule {
     }
 
     // ==================== 输入处理 ====================
+
+    /**
+     * 在光标位置插入文本
+     * @param {HTMLTextAreaElement} textarea
+     * @param {string} textToInsert
+     */
     _insertAtCursor(textarea, textToInsert) {
         if (!textarea) return;
         if (textarea.selectionStart !== undefined && textarea.selectionStart !== null) {
@@ -215,6 +267,7 @@ class MultiQRCodeModule {
         this._onInput();
     }
 
+    /** 输入变化处理，触发预览更新 */
     _onInput() {
         if (this._isComposing) return;
         if (typeof qrcode === 'undefined') {
@@ -226,6 +279,11 @@ class MultiQRCodeModule {
         this._renderPreviews();
     }
 
+    /**
+     * 9/10 位无连字符字符串按位置插入连字符
+     * @param {string} code
+     * @returns {string}
+     */
     _formatLocationCode(code) {
         if (!code) return code;
         const withoutHyphens = code.replace(/-/g, '');
@@ -236,12 +294,19 @@ class MultiQRCodeModule {
             return parts.join('-');
         } else if (len === 9) {
             const parts = withoutHyphens.match(/^(.{1})(.{2})(.{2})(.{2})(.{2})$/);
-            return parts ? parts.slice(1).join("-") : withoutHyphens;
+            return parts ? parts.slice(1).join('-') : withoutHyphens;
         } else {
             return code;
         }
     }
 
+    /**
+     * 处理单行输入为多个二维码条目
+     * @param {string} line
+     * @param {boolean} autoUppercase
+     * @param {boolean} formatLocation
+     * @returns {Array<{content:string,display:string}>}
+     */
     _processLine(line, autoUppercase, formatLocation) {
         const trimmed = line.trim();
         if (trimmed === '') return [];
@@ -268,6 +333,7 @@ class MultiQRCodeModule {
         return [{ content, display: content }];
     }
 
+    /** 渲染二维码预览（最多前 10 个） */
     _renderPreviews() {
         const textarea = document.getElementById('multiQrTextInput');
         if (!textarea) return;
@@ -277,6 +343,7 @@ class MultiQRCodeModule {
         previewContainer.innerHTML = '';
         if (!rawText.trim()) return;
 
+        const now = new Date();
         const MAX_ITEMS = 10;
         const MAX_LEN = 50;
         const autoUppercase = document.getElementById('autoUppercase')?.checked || false;
@@ -299,11 +366,17 @@ class MultiQRCodeModule {
             previewContainer.appendChild(hint);
         }
         for (const item of shown) {
-            this._generateQRItem(item.content, item.display, previewContainer);
+            this._generateQRItem(item.content, item.display, previewContainer, now);
         }
     }
 
     // ==================== 商品识别 ====================
+
+    /**
+     * 解析数字串为商品码、日期、时间、重量
+     * @param {string} numericStr
+     * @returns {Object|null}
+     */
     _parseNumberSegments(numericStr) {
         if (!/^\d+$/.test(numericStr)) return null;
         const len = numericStr.length;
@@ -340,56 +413,62 @@ class MultiQRCodeModule {
         return { productCode, formattedDate, weightGrams, usedLen: codeLen, dateStr, time };
     }
 
+    /**
+     * 判断是否当日鲜
+     * @param {string} dateStr
+     * @param {string} time
+     * @param {Date} [now]
+     * @returns {boolean}
+     */
     _isFresh(dateStr, time, now = new Date()) {
         if (!dateStr || !time || !/^\d{6}$/.test(dateStr)) return false;
         const year = 2000 + parseInt(dateStr.substring(0, 2), 10);
         const month = parseInt(dateStr.substring(2, 4), 10) - 1;
         const day = parseInt(dateStr.substring(4, 6), 10);
         const hour = parseInt(time, 10);
-        const prodDate = new Date(year, month, day, hour, 0, 0);
+        const prodDay = new Date(year, month, day);
         const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const prodMonthDay = prodDate.getMonth() * 100 + prodDate.getDate();
-        const todayMonthDay = today.getMonth() * 100 + today.getDate();
-        const yesterdayMonthDay = yesterday.getMonth() * 100 + yesterday.getDate();
-        if (prodMonthDay === todayMonthDay) return true;
-        if (prodMonthDay === yesterdayMonthDay && hour >= 12) return true;
+        const diffDays = Math.round((today - prodDay) / 86400000);
+        if (diffDays === 0) return true;
+        if (diffDays === 1 && hour === 12) return true;
         return false;
     }
 
+    /**
+     * 从商品 Map 读取商品名与当日鲜标记
+     * @param {string} code
+     * @returns {{name:string|null,needFresh:boolean}}
+     */
     _getProductInfo(code) {
         const entry = this.productMap.get(code);
-        if (entry === undefined) return { name: null, needFresh: false, isOldMap: false };
-        if (typeof entry === 'string') {
-            return { name: entry, needFresh: false, isOldMap: true };
-        }
+        if (entry === undefined) return { name: null, needFresh: false };
         if (typeof entry === 'object' && entry !== null && typeof entry.name === 'string') {
-            return { name: entry.name, needFresh: entry.needFresh === true, isOldMap: false };
+            return { name: entry.name, needFresh: entry.needFresh === true };
         }
-        return { name: null, needFresh: false, isOldMap: false };
+        return { name: null, needFresh: false };
     }
 
-    _buildExtraInfoHTML(segments) {
+    /**
+     * 构建商品信息 HTML（名称、日期、重量、当日鲜标记）
+     * @param {Object} segments
+     * @param {Date} now
+     * @returns {string}
+     */
+    _buildExtraInfoHTML(segments, now) {
         if (!segments) return '';
         const parts = [];
         const info = this._getProductInfo(segments.productCode);
         const productName = info.name;
         const needFresh = info.needFresh;
-        const isOldMap = info.isOldMap;
 
         let nameDisplay = productName || MQ_TEXT.info_productCodeUnregistered.replace('{code}', segments.productCode);
-        let extraNote = '';
-        if (productName) {
-            if (isOldMap) {
-                extraNote = MQ_TEXT.info_oldMapNote;
-            } else if (needFresh && segments.time) {
-                if (this._isFresh(segments.dateStr, segments.time)) {
-                    nameDisplay = productName + MQ_TEXT.info_freshTag;
-                }
+        if (productName && needFresh && segments.time) {
+            if (this._isFresh(segments.dateStr, segments.time, now)) {
+                nameDisplay = productName + MQ_TEXT.info_freshTag;
             }
         }
-        parts.push(MQ_TEXT.info_product.replace('{name}', nameDisplay) + extraNote);
+        parts.push(MQ_TEXT.info_product.replace('{name}', nameDisplay));
+
         if (segments.formattedDate) {
             parts.push(MQ_TEXT.info_date.replace('{date}', segments.formattedDate).replace('{time}', segments.time ? ' ' + segments.time + ':00' : ''));
         }
@@ -400,6 +479,13 @@ class MultiQRCodeModule {
         return `<div class="multi-qr-extra-info">${parts.join(' ')}</div>`;
     }
 
+    /**
+     * 对二维码下方文字按段染色（商品码、日期、重量）
+     * @param {string} display
+     * @param {string} rawContent
+     * @param {number} usedLen
+     * @returns {string|DocumentFragment}
+     */
     _colorizeDisplayText(display, rawContent, usedLen) {
         if (!/^\d{20,}$/.test(rawContent)) return display;
         const digits = display.match(/\d/g);
@@ -444,7 +530,14 @@ class MultiQRCodeModule {
         return frag;
     }
 
-    _generateQRItem(content, display, container) {
+    /**
+     * 生成单个二维码预览项
+     * @param {string} content
+     * @param {string} display
+     * @param {HTMLElement} container
+     * @param {Date} now
+     */
+    _generateQRItem(content, display, container, now) {
         const item = document.createElement('div');
         item.className = 'multi-qr-preview-item';
         try {
@@ -479,6 +572,7 @@ class MultiQRCodeModule {
             img.title = content;
             img.style.width = `${totalSize}px`;
             img.style.height = `${totalSize}px`;
+
             const textDiv = document.createElement('div');
 
             const showProductInfo = document.getElementById('showProductInfo')?.checked !== false;
@@ -499,6 +593,7 @@ class MultiQRCodeModule {
 
             if (typeof coloredContent === 'string') textDiv.textContent = coloredContent;
             else textDiv.appendChild(coloredContent);
+
             item.appendChild(img);
             item.appendChild(textDiv);
 
@@ -508,25 +603,24 @@ class MultiQRCodeModule {
                     const segments = this._parseNumberSegments(rawNumeric);
                     if (segments) {
                         const extraDiv = document.createElement('div');
-                        extraDiv.innerHTML = this._buildExtraInfoHTML(segments);
+                        extraDiv.innerHTML = this._buildExtraInfoHTML(segments, now);
                         item.appendChild(extraDiv);
                     }
                 } else if (rawNumeric.length === 13 && this.productMap.has(rawNumeric)) {
                     const extraDiv = document.createElement('div');
                     const info = this._getProductInfo(rawNumeric);
                     const name = this.app.escapeHtml(info.name || rawNumeric);
-                    const note = info.isOldMap ? MQ_TEXT.info_oldMapNoteShort : '';
-                    extraDiv.innerHTML = `<div class="multi-qr-extra-info">${MQ_TEXT.info_product.replace('{name}', name)}${note}</div>`;
+                    extraDiv.innerHTML = `<div class="multi-qr-extra-info">${MQ_TEXT.info_product.replace('{name}', name)}</div>`;
                     item.appendChild(extraDiv);
                 } else if (/^\d+$/.test(rawNumeric) && this.productMap.has(rawNumeric)) {
                     const extraDiv = document.createElement('div');
                     const info = this._getProductInfo(rawNumeric);
                     const name = this.app.escapeHtml(info.name || rawNumeric);
-                    const note = info.isOldMap ? MQ_TEXT.info_oldMapNoteShort : '';
-                    extraDiv.innerHTML = `<div class="multi-qr-extra-info">${MQ_TEXT.info_product.replace('{name}', name)}${note}</div>`;
+                    extraDiv.innerHTML = `<div class="multi-qr-extra-info">${MQ_TEXT.info_product.replace('{name}', name)}</div>`;
                     item.appendChild(extraDiv);
                 }
             }
+
             container.appendChild(item);
         } catch (error) {
             console.error('生成二维码失败:', error, content);
@@ -538,6 +632,8 @@ class MultiQRCodeModule {
     }
 
     // ==================== 搜索 ====================
+
+    /** 切换搜索模式（商品 / 常用库位） */
     _toggleSearchMode() {
         const btn = document.getElementById('multiQrSearchModeBtn');
         if (!btn) return;
@@ -557,36 +653,87 @@ class MultiQRCodeModule {
         }
     }
 
+    /**
+     * 规范化库位码或查询串为可比较形式
+     * - 含分隔符 '-'：按段切分
+     * - 不含分隔符：每 2 字符切分（末段不足 2 位保留）
+     * - 每段：'00' 保留；纯数字去前导 0；其他原样保留
+     * @param {string} str
+     * @returns {string}
+     */
+    _normalizeLocationString(str) {
+        if (!str) return '';
+        const s = String(str).trim();
+        if (!s) return '';
+        let segments;
+        if (s.includes('-')) {
+            segments = s.split('-');
+        } else {
+            segments = [];
+            for (let i = 0; i < s.length; i += 2) {
+                segments.push(s.slice(i, i + 2));
+            }
+        }
+        return segments.map(seg => {
+            if (seg === '00') return '00';
+            if (/^\d+$/.test(seg)) {
+                const stripped = seg.replace(/^0+/, '');
+                return stripped || '0';
+            }
+            return seg;
+        }).join('');
+    }
+
+    /**
+     * 执行搜索：商品多 token AND，库位规范化子串匹配
+     * @param {string} query
+     */
     _performSearch(query) {
         if (this._searchTimer) {
             clearTimeout(this._searchTimer);
             this._searchTimer = null;
         }
-        if (!query || query.trim().length < 2) {
+        const isLocation = this._searchMode === 'location';
+        const minLen = isLocation ? 3 : 2;
+        const trimmed = (query || '').trim();
+        if (trimmed.length < minLen) {
             this._hideResults();
             return;
         }
         this._searchTimer = setTimeout(() => {
             this._searchTimer = null;
-            const lowerQuery = query.toLowerCase().trim();
             let results = [];
             if (this._searchMode === 'product') {
                 if (this._productMapLoadFailed || this.productMap.size === 0) {
                     this._hideResults();
                     return;
                 }
+                const tokens = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
+                if (tokens.length === 0) {
+                    this._hideResults();
+                    return;
+                }
                 for (const [code, value] of this.productMap) {
                     if (results.length >= 50) break;
-                    let name = typeof value === 'string' ? value : value.name;
-                    if (name.toLowerCase().includes(lowerQuery) || code.toLowerCase().includes(lowerQuery)) {
+                    const name = typeof value === 'string' ? value : value.name;
+                    const lowerName = name.toLowerCase();
+                    const lowerCode = code.toLowerCase();
+                    const hit = tokens.every(t => lowerName.includes(t) || lowerCode.includes(t));
+                    if (hit) {
                         results.push({ display: `${name} (${code})`, value: code });
                     }
                 }
                 results.sort((a, b) => a.display.localeCompare(b.display));
             } else {
+                const normalizedQuery = this._normalizeLocationString(trimmed).toLowerCase();
+                if (!normalizedQuery) {
+                    this._hideResults();
+                    return;
+                }
                 for (const loc of this.commonLocations) {
                     if (results.length >= 50) break;
-                    if (loc.toLowerCase().includes(lowerQuery)) {
+                    const normalizedLoc = this._normalizeLocationString(loc).toLowerCase();
+                    if (normalizedLoc.includes(normalizedQuery)) {
                         results.push({ display: loc, value: loc });
                     }
                 }
@@ -597,6 +744,10 @@ class MultiQRCodeModule {
         }, 200);
     }
 
+    /**
+     * 渲染搜索结果列表
+     * @param {Array} results
+     */
     _showResults(results) {
         const container = document.getElementById('multiQrSearchResults');
         if (!container) return;
@@ -622,6 +773,7 @@ class MultiQRCodeModule {
         if (selected) selected.scrollIntoView({ block: 'nearest' });
     }
 
+    /** 隐藏搜索结果列表 */
     _hideResults() {
         const container = document.getElementById('multiQrSearchResults');
         if (container) container.style.display = 'none';
@@ -629,6 +781,10 @@ class MultiQRCodeModule {
         this._selectedIndex = -1;
     }
 
+    /**
+     * 插入搜索结果到输入框
+     * @param {string} value
+     */
     _insertResult(value) {
         const textarea = document.getElementById('multiQrTextInput');
         if (!textarea) return;
@@ -639,6 +795,10 @@ class MultiQRCodeModule {
         textarea.focus();
     }
 
+    /**
+     * 搜索框键盘导航
+     * @param {KeyboardEvent} e
+     */
     _onSearchKeydown(e) {
         const results = this._searchResults;
         if (results.length === 0) return;
@@ -661,7 +821,12 @@ class MultiQRCodeModule {
         }
     }
 
-    // ==================== 渲染 ====================
+    // ==================== UI ====================
+
+    /**
+     * 绑定面板事件
+     * @param {HTMLElement} panel
+     */
     bindEvents(panel) {
         const textarea = panel.querySelector('#multiQrTextInput');
         if (!textarea) return;
@@ -742,6 +907,7 @@ class MultiQRCodeModule {
         setTimeout(() => this._onInput(), 0);
     }
 
+    /** 渲染模块面板 */
     renderPanel(panel) {
         this.injectStyles();
         panel.innerHTML = `
@@ -752,12 +918,12 @@ class MultiQRCodeModule {
                         <div class="table-header multi-qr-header">
                             <div class="multi-qr-header-actions">
                                 <div class="multi-qr-checkbox-group">
-                                    <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
-                                        <div class="checkbox-group">
+                                    <div class="toolbar" style="margin-bottom:0">
+                                        <div class="checkbox-group" style="margin:0">
                                             <input type="checkbox" id="autoUppercase" checked>
                                             <label for="autoUppercase">${MQ_TEXT.label_autoUppercase}</label>
                                         </div>
-                                        <div class="checkbox-group">
+                                        <div class="checkbox-group" style="margin:0">
                                             <input type="checkbox" id="generateLocationCode" checked>
                                             <label for="generateLocationCode">${MQ_TEXT.label_formatLocation}</label>
                                         </div>
@@ -768,7 +934,7 @@ class MultiQRCodeModule {
                                         <span id="productMapStatus" class="status-text" style="margin-left:12px;"></span>
                                     </div>
                                 </div>
-                                <button type="button" id="clearMultiQrText" class="btn btn-secondary multi-qr-clear-btn">${this.app.getIcon('arrow-repeat')}<br>${MQ_TEXT.btn_clear}<br>${MQ_TEXT.btn_clearHint}</button>
+                                <button type="button" id="clearMultiQrText" class="btn btn-secondary multi-qr-clear-btn">${this.app.getIcon('arrow-counterclockwise')}<br>${MQ_TEXT.btn_clear}<br>${MQ_TEXT.btn_clearHint}</button>
                             </div>
                         </div>
 
@@ -812,35 +978,18 @@ class MultiQRCodeModule {
     }
 }
 
+// ==================== 文案 ====================
+
 const MQ_TEXT = {
     title: '多二维码生成',
     introText: '批量生成多个二维码，支持自动格式化和大写，支持商品信息查询。',
     helpDescription: `
-<p><strong>功能说明</strong><br>批量生成多个二维码，每行一个输入项。支持从扫码记录中复制库位和条码混合输入（空格分隔）自动生成多个二维码。</p>
-<p><strong>使用建议</strong><br>单次最多生成 10 个二维码，单个内容不超过 50 字符。</p>
-<p><strong>输入格式</strong><br>
-• 每行一个或多个二维码内容（若启用库位格式化，可用空格分隔多个码）。<br>
-• 启用「自动大写」会将所有字母转为大写。<br>
-• 启用「自动格式化库位码」会将9位或10位无连字符的字母数字自动格式化为 <code>A-BB-CC-DD-EE</code> 或 <code>AA-BB-CC-DD-EE</code> 形式；其他情况会移除已有连字符。<br>
-• <strong>复选框联动规则</strong>：勾选「自动格式化库位码」会自动勾选并启用「自动大写」；取消「自动大写」会自动取消「自动格式化库位码」。</p>
-<p><strong>商品信息识别</strong><br>
-当二维码内容为纯数字时，自动解析：<br>
-• 件码（≥20位）：提取商品码（支持5/7位，由前缀和总长度唯一确定）、生产日期（6位YYMMDD）、时间（2位HH，仅00或12）、重量（最后5位中前4位，单位克）。若数字以"26"开头，则不显示重量及对应染色。<br>
-• 标品13位码或其他存在于商品库中的数字：显示商品名称。<br>
-商品映射支持两种格式：<br>
-1. 旧版Map：<code>new Map([["code","name"]])</code>（不支持当日鲜）<br>
-2. 新版数组：<code>[["code","name","是"], ...]</code>（第三列为"是"时参与当日鲜判定）</p>
-<p><strong>快速检索</strong><br>
-在搜索框中输入文字，自动匹配商品名称或条码或常用库位。库位检索数据来自 <a href="./js/data/commonLocations.js" target="_blank">js/data/commonLocations.js</a>，数据请自行维护。</p>
-<p><strong>其他</strong><br>
-• 浏览器插件版（测试版）：<a href="https://gitee.com/cnwz/text2qr-extension/releases" target="_blank">https://gitee.com/cnwz/text2qr-extension/releases</a><br>
-• 按 <kbd>ESC</kbd> 键可快速清空输入框。</p>
-<p><strong>当日鲜判定</strong><br>
-部分件码包含生产日期和时间（格式 YYMMDDHH，HH 仅为 00 或 12）。满足以下条件之一即为「当日鲜」：<br>
-• 生产日期为今日（任意时间）<br>
-• 生产日期为昨日且时间 ≥ 12:00<br>
-符合条件时，商品名后以粗体粉色 (#ee6aa7) 显示"当日鲜"。<br>
-旧版Map（纯字符串值）不支持当日鲜判定。</p>
+<p><strong>怎么用</strong><br>把内容粘贴到左侧输入框，右侧实时生成二维码。每行一个，也可用空格分隔多个码一次生成多个。</p>
+<p><strong>常用开关</strong><br>「自动大写」把字母转大写；「自动格式化库位码」把无连字符的库位码自动加 <code>-</code>，勾它会连带勾上自动大写。</p>
+<p><strong>商品信息</strong><br>输入纯数字时会自动查商品名、日期、重量，符合当日鲜的会标出来。需要 <code>productMap.js</code> 支持。</p>
+<p><strong>搜索</strong><br>点上方"搜索"展开。商品模式支持空格分隔多关键词（如「统一 1L」）。库位模式输 3 位以上即可。</p>
+<p><strong>其他</strong><br>单次最多 10 个，按 <kbd>ESC</kbd> 清空。</p>
+<p>插件版：<a href="https://gitee.com/cnwz/xxcs-extension/releases" target="_blank">https://gitee.com/cnwz/xxcs-extension/releases</a></p>
 `,
 
     tag_basicVersion: '基础版',
@@ -862,73 +1011,54 @@ const MQ_TEXT = {
     alt_qr: '二维码',
 
     status_mapLoadFailed: '（基础版）',
-    status_oldMap: '（旧版productMap，不支持当日鲜）',
-    status_newMap: '正常',
+    status_newMap: '正常，数据版本',
 
     info_product: '[商品] {name}',
     info_productCodeUnregistered: '[商品码] {code} (未录入)',
     info_date: '<br>[日期] 20{date}{time}',
     info_weight: '[重量] {w} g',
     info_freshTag: ' <span style="font-weight:bold;color:#ee6aa7;">当日鲜</span>',
-    info_oldMapNote: ' <span style="color:#999;font-weight:normal;font-size:13px;">(旧版productMap，不支持当日鲜)</span>',
-    info_oldMapNoteShort: ' <span style="color:#999;font-weight:normal;font-size:13px;">(旧版productMap)</span>',
 
-    err_unknownMapFormat: '无法识别的productMap格式',
+    err_unknownMapFormat: '商品库格式错误：仅支持三列数组 [条码, 商品名, 当日鲜]',
+    err_arrayNeedThreeCols: '商品库第 {n} 行格式错误：需要三列 [条码, 商品名, 当日鲜]',
     err_noProductMapData: '未找到有效商品映射数据',
     err_productMapLoadFailed: '无法加载商品映射文件: {url}',
     err_qrGenerateFailed: '生成失败:',
-    warn_commonLocationsNotExported: '[MultiQR] 常用库位文件 {url} 未导出 window.commonLocationsData，使用内置默认列表',
     warn_commonLocationsLoadFailed: '[MultiQR] 加载常用库位文件失败: {url}，使用内置默认列表',
 
-    styles: `.mq-basic-tag{color:red}
-.multi-qr-container{display:flex;gap:40px;margin-top:25px}
+    styles: `.mq-basic-tag{color:var(--danger)}
+.multi-qr-container{display:flex;gap:var(--sp-6);margin-top:var(--sp-5)}
 .multi-qr-left,.multi-qr-right{flex:1;min-width:350px}
-.multi-qr-left h4,.multi-qr-right h4{margin-bottom:15px;color:#333;font-size:18px}
-.multi-qr-left textarea{width:100%;height:350px;padding:16px;border:2px solid #e0e0e0;border-radius:8px;resize:vertical;margin-bottom:20px;font-size:18px;line-height:1.6}
-.multi-qr-left textarea:focus{border-color:#FFBD00;box-shadow:0 0 0 3px rgba(255,189,0,0.1);outline:0}
-#multiQrPreview{display:flex;flex-direction:column;gap:25px}
-.multi-qr-preview-item{text-align:center;padding:20px}
-.multi-qr-preview-item img{width:auto;height:auto;max-width:220px;margin:0 auto 20px;display:block}
-.multi-qr-preview-item div{font-weight:700;word-break:break-all;font-size:17px;color:#333;line-height:1.5;padding:0;background:0 0;border-radius:0;text-align:center}
-.multi-qr-header-actions{display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;width:100%}
+.multi-qr-left h4,.multi-qr-right h4{margin-bottom:var(--sp-4);color:var(--text-strong);font-size:var(--fs-lg)}
+.multi-qr-left textarea{width:100%;height:350px;padding:var(--sp-4);border:2px solid var(--border);border-radius:var(--r);resize:vertical;margin-bottom:var(--sp-5);font-size:var(--fs-lg);line-height:1.6;background:var(--bg-input);color:var(--text-strong)}
+.multi-qr-left textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,189,0,.15);outline:0}
+#multiQrPreview{display:flex;flex-direction:column;gap:var(--sp-5)}
+.multi-qr-preview-item{text-align:center;padding:var(--sp-5)}
+.multi-qr-preview-item img{width:auto;height:auto;max-width:220px;margin:0 auto var(--sp-5);display:block}
+.multi-qr-preview-item div{font-weight:700;word-break:break-all;font-size:var(--fs-lg);color:var(--text-strong);line-height:1.5;padding:0;background:0 0;border-radius:0;text-align:center}
+.multi-qr-header-actions{display:flex;flex-wrap:wrap;align-items:stretch;gap:var(--sp-2);width:100%}
 .multi-qr-checkbox-group{flex:1;display:flex;flex-direction:column;justify-content:space-around;min-width:200px}
 .multi-qr-clear-btn{height:auto;align-self:center;white-space:nowrap;flex-shrink:0}
-.multi-qr-extra-info{font-size:14px;font-weight:400;margin-top:8px;color:#555;padding:8px 12px;border-radius:6px;display:inline-block;max-width:90%;margin-left:auto;margin-right:auto}
-.multi-qr-limit-hint{margin-bottom:12px;padding:8px 12px;background:#fff8e1;border-left:3px solid #FFBD00;color:#b08800;font-size:13px;border-radius:4px}
-.quick-input-buttons{display:flex;flex-direction:column;gap:8px;width:40px;flex-shrink:0}
-.quick-input-buttons .quick-btn{background:#f0f0f0;border:1px solid #ccc;border-radius:4px;padding:8px 0;font-size:20px;cursor:pointer;text-align:center;transition:background .2s}
-.quick-input-buttons .quick-btn:hover{background:#e0e0e0}
-.multi-qr-input-area{display:flex;gap:12px;align-items:flex-start}
+.multi-qr-extra-info{font-size:var(--fs-sm);font-weight:400;margin-top:var(--sp-2);color:var(--text);padding:var(--sp-2) var(--sp-3);border-radius:var(--r-sm);display:inline-block;max-width:90%;margin-left:auto;margin-right:auto}
+.multi-qr-limit-hint{margin-bottom:var(--sp-3);padding:var(--sp-2) var(--sp-3);background:var(--accent-soft);border-left:3px solid var(--accent);color:var(--accent-text);font-size:var(--fs-sm);border-radius:var(--r-sm)}
+.quick-input-buttons{display:flex;flex-direction:column;gap:var(--sp-2);width:40px;flex-shrink:0}
+.quick-input-buttons .quick-btn{background:var(--bg-sub);border:1px solid var(--border);border-radius:var(--r-sm);padding:var(--sp-2) 0;font-size:20px;cursor:pointer;text-align:center;transition:background var(--t);color:var(--text-strong)}
+.quick-input-buttons .quick-btn:hover{background:var(--bg-hover)}
+.multi-qr-input-area{display:flex;gap:var(--sp-3);align-items:flex-start}
 .multi-qr-left textarea{flex:1;margin-bottom:0}
-.multi-qr-search-container{margin:12px 0 8px}
-a.multi-qr-search-toggle{color:#333;cursor:pointer;text-decoration:none;font-size:14px;display:inline-block}
-a.multi-qr-search-toggle:hover{color:#333;text-decoration:none}
-.multi-qr-search-toolbar{margin-top:6px;margin-bottom:0}
-.multi-qr-search-mode-btn{padding:4px 12px;border:1px solid #ccc;border-radius:4px;background:#f0f0f0;cursor:pointer;font-size:13px;white-space:nowrap;height:32px;line-height:1.4;width:auto!important;min-width:60px}
-.multi-qr-search-mode-btn:hover{background:#e0e0e0}
+.multi-qr-search-container{margin:var(--sp-3) 0 var(--sp-2)}
+a.multi-qr-search-toggle{color:var(--text-strong);cursor:pointer;text-decoration:none;font-size:var(--fs-sm);display:inline-block}
+a.multi-qr-search-toggle:hover{color:var(--accent-text);text-decoration:none}
+.multi-qr-search-toolbar{margin-top:var(--sp-2);margin-bottom:0}
+.multi-qr-search-mode-btn{padding:var(--sp-1) var(--sp-3);border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-sub);cursor:pointer;font-size:var(--fs-sm);white-space:nowrap;height:32px;line-height:1.4;min-width:60px;color:var(--text-strong)}
+.multi-qr-search-mode-btn:hover{background:var(--bg-hover)}
 .multi-qr-search-wrapper{flex:1;min-width:0;position:relative}
-#multiQrSearchInput{width:100%!important;padding:6px 12px;border:1px solid #ccc;border-radius:4px;font-size:14px;box-sizing:border-box;height:32px;display:block}
-.multi-qr-search-results{position:absolute;top:calc(100% + 2px);left:0;right:0;max-height:200px;overflow-y:auto;background:#fff;border:1px solid #ccc;border-radius:4px;z-index:1000;box-shadow:0 4px 12px rgba(0,0,0,.15);display:none}
-.multi-qr-search-results .result-item{padding:8px 12px;cursor:pointer;font-size:14px;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between}
-.multi-qr-search-results .result-item:hover{background:#f5f5f5}
-.multi-qr-search-results .result-item.selected{background:#e3f2fd}
-body.dark-mode .mq-basic-tag{color:#ff6b6b!important}
-body.dark-mode .quick-input-buttons .quick-btn{background:#3a3a44;border-color:#555;color:#fff}
-body.dark-mode .quick-input-buttons .quick-btn:hover{background:#4a4a58}
-body.dark-mode .multi-qr-left textarea{background:#2c2c38!important;color:#f0f0f0!important}
-body.dark-mode .multi-qr-preview-item{background:#1e1e2a!important;border-color:#3a3a44!important}
-body.dark-mode .multi-qr-preview-item div{color:#fff!important}
-body.dark-mode .multi-qr-checkbox-group label{color:#fff!important}
-body.dark-mode .multi-qr-extra-info{color:#e0e0e0!important}
-body.dark-mode a.multi-qr-search-toggle{color:#fff!important}
-body.dark-mode a.multi-qr-search-toggle:hover{color:#fff!important;text-decoration:none}
-body.dark-mode .multi-qr-search-mode-btn{background:#3a3a44;border-color:#555;color:#fff}
-body.dark-mode .multi-qr-search-mode-btn:hover{background:#4a4a58}
-body.dark-mode #multiQrSearchInput{background:#2c2c38;border-color:#4a4a58;color:#f0f0f0}
-body.dark-mode .multi-qr-search-results{background:#2c2c38;border-color:#4a4a58}
-body.dark-mode .multi-qr-search-results .result-item{color:#e0e0e0;border-color:#3a3a48}
-body.dark-mode .multi-qr-search-results .result-item:hover{background:#3a3a48}
-body.dark-mode .multi-qr-search-results .result-item.selected{background:#3a4a5a}
+#multiQrSearchInput{width:100%;padding:var(--sp-2) var(--sp-3);border:1px solid var(--border);border-radius:var(--r-sm);font-size:var(--fs-sm);box-sizing:border-box;height:32px;display:block;background:var(--bg-input);color:var(--text-strong)}
+.multi-qr-search-results{position:absolute;top:calc(100% + 2px);left:0;right:0;max-height:200px;overflow-y:auto;background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--r-sm);z-index:1000;box-shadow:0 4px 12px rgba(0,0,0,.15);display:none}
+.multi-qr-search-results .result-item{padding:var(--sp-2) var(--sp-3);cursor:pointer;font-size:var(--fs-sm);border-bottom:1px solid var(--border-soft);display:flex;justify-content:space-between;color:var(--text)}
+.multi-qr-search-results .result-item:hover{background:var(--bg-hover)}
+.multi-qr-search-results .result-item.selected{background:var(--accent-soft)}
 @media (max-width:600px){.multi-qr-input-area{flex-direction:column}.quick-input-buttons{flex-direction:row;flex-wrap:wrap;width:100%}.quick-input-buttons .quick-btn{flex:1}}`
 };
+
 window.MultiQRCodeModule = MultiQRCodeModule;

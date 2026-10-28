@@ -2,18 +2,21 @@
  * @description 整理动线模块
  * @author me@cnwz.me
  * @since 2026-09-11
- * @lastupdate 2026-09-16
- * @version 1.0.0
- * @wiki https://gitee.com/{repo}/wikis/模块示例/整理动线
- * @rules ./rules/SortingModule.md
+ * @lastupdate 2026-09-21
+ * @version 2.0.0
+ * @wiki https://gitee.com/cnwz/xxcs-tool/wikis/开发/SortingModule.md
+ * @license Unlicense
  * @security 本文件不收集、不存储、不传输任何用户数据。所有计算在浏览器本地完成。
  */
 class SortingModule {
+    /**
+     * @param {Core} app
+     */
     constructor(app) {
         this.app = app;
         this.title = SM_TEXT.title;
-        this.ver = '1.0.0';
-        this.lastupdate = '2026-09-16';
+        this.ver = '2.0.0';
+        this.lastupdate = '2026-09-21';
         this.iconName = 'list-ul';
         this.introText = SM_TEXT.introText;
         this.helpDescription = SM_TEXT.helpDescription;
@@ -25,20 +28,28 @@ class SortingModule {
         this.selectedCodesBeforeReorder = [];
         this.departmentPattern = (this.app.validations && this.app.validations.departmentPattern) || /^小象超市-[\u4e00-\u9fa5]+-[A-Z]{2}\d{4}$/;
         this._iconCache = {
-            upload: this.app.getIcon('upload'),
             gear: this.app.getIcon('gear'),
             arrowUp: this.app.getIcon('arrow-up'),
             arrowDown: this.app.getIcon('arrow-down'),
             xlsx: this.app.getIcon('filetype-xlsx'),
-            refresh: this.app.getIcon('arrow-repeat'),
+            refresh: this.app.getIcon('arrow-counterclockwise'),
             list: this.app.getIcon('list-ul'),
         };
     }
 
+    /** 注入模块样式 */
     injectStyles() {
         this.app.injectStyle(this.id, SM_TEXT.styles);
     }
 
+    // ==================== 数据处理 ====================
+
+    /**
+     * 读取行中指定列的值
+     * @param {Array} row
+     * @param {string|number} key
+     * @returns {string}
+     */
     getCell(row, key) {
         const idx = typeof key === 'string' ? this.headerIndex[key] : key;
         if (idx === undefined || idx >= row.length) return '';
@@ -46,6 +57,11 @@ class SortingModule {
         return (val !== undefined && val !== null) ? String(val).trim() : '';
     }
 
+    /**
+     * 按别名列表查找列 key
+     * @param {string[]} aliases
+     * @returns {string|null}
+     */
     findColumnKey(aliases) {
         for (let alias of aliases) {
             if (this.headerIndex[alias] !== undefined) return alias;
@@ -53,6 +69,11 @@ class SortingModule {
         return null;
     }
 
+    /**
+     * 判断货架类型：含 DD 层为地堆，否则货架
+     * @param {Object} shelf
+     * @returns {string}
+     */
     getShelfType(shelf) {
         for (const loc of shelf.locations) {
             const parts = loc.locationCode.split('-');
@@ -61,15 +82,19 @@ class SortingModule {
         return SM_TEXT.shelfType_rack;
     }
 
+    /** 按起始值和步长重算全部货架的排序值 */
     applySortOrder() {
         const start = parseInt(document.getElementById('smStartValue')?.value) || 10;
         const step = parseInt(document.getElementById('smStepValue')?.value) || 10;
         for (let i = 0; i < this.shelves.length; i++) {
             this.shelves[i].sortOrder = start + i * step;
         }
-        this.updateSortOrderDisplay();
     }
 
+    /**
+     * 解析 Excel 行数据，构建 shelves
+     * @param {Array<Array>} rows
+     */
     processRawData(rows) {
         if (rows.length < 2) throw new Error(SM_TEXT.err_needTwoRows);
         this.headers = (rows[0] || []).map(h => String(h == null ? '' : h).trim());
@@ -148,6 +173,10 @@ class SortingModule {
         this.applySortOrder();
     }
 
+    /**
+     * 按给定货架编码顺序重排
+     * @param {string[]} orderList
+     */
     reorderShelvesByCodeOrder(orderList) {
         this.captureSelectedCodes();
         const orderMap = new Map();
@@ -165,6 +194,10 @@ class SortingModule {
         this.app.showMessage(SM_TEXT.msg_reorderSuccess, 'success');
     }
 
+    /**
+     * 获取已勾选货架的下标列表
+     * @returns {number[]}
+     */
     getSelectedIndices() {
         const checkboxes = document.querySelectorAll('#smShelfListContainer .item-checkbox:checked');
         const indices = [];
@@ -178,6 +211,7 @@ class SortingModule {
         return indices.sort((a, b) => a - b);
     }
 
+    /** 记录当前勾选货架的编码 */
     captureSelectedCodes() {
         this.selectedCodesBeforeReorder = [];
         const checkboxes = document.querySelectorAll('#smShelfListContainer .item-checkbox:checked');
@@ -187,6 +221,7 @@ class SortingModule {
         });
     }
 
+    /** 恢复勾选状态 */
     restoreSelectedCodes() {
         const checkboxes = document.querySelectorAll('#smShelfListContainer .item-checkbox');
         checkboxes.forEach(cb => {
@@ -197,20 +232,19 @@ class SortingModule {
         this.updateSelectedCount();
     }
 
-    async handleFileUpload() {
-        const fileInput = document.getElementById('smSortingFileInput');
-        const file = fileInput.files[0];
-        if (!file) {
-            this.app.showMessage(SM_TEXT.msg_pleaseSelectFile, 'error');
-            return;
-        }
+    /**
+     * 处理文件上传
+     * @returns {Promise<void>}
+     */
+    async handleFileUpload(file) {
+        const table = await this.app.readExcelTable(file, {
+            emptyMessage: SM_TEXT.err_fileEmpty,
+            parseErrorMessage: SM_TEXT.msg_parseFailed,
+        });
+        if (!table) return;
+
         try {
-            const json = await this.app.readExcel(file);
-            if (!json || json.length < 2) throw new Error(SM_TEXT.err_fileEmpty);
-            if (json.length > 50000) {
-                this.app.showMessage('数据超过 5 万行，请拆分后上传', 'error');
-                return;
-            }
+            const json = [table.headers, ...table.rows];
             this.processRawData(json);
             this.app.showMessage(SM_TEXT.msg_parseSuccess, 'success');
             document.getElementById('smSortingResultArea').classList.remove('hidden');
@@ -221,6 +255,10 @@ class SortingModule {
         }
     }
 
+    /**
+     * 从 Excel 导入货架顺序
+     * @returns {Promise<void>}
+     */
     async importOrderFromExcel() {
         const fileInput = document.getElementById('smSortingOrderFileInput');
         const file = fileInput.files[0];
@@ -259,6 +297,7 @@ class SortingModule {
         }
     }
 
+    /** 从文本框导入货架顺序 */
     importOrderFromText() {
         const textarea = document.getElementById('smSortingOrderText');
         let rawText = textarea.value;
@@ -283,22 +322,7 @@ class SortingModule {
         textarea.value = '';
     }
 
-    updateSortOrderDisplay() {
-        const items = document.querySelectorAll('#smSortingList .sorting-item');
-        if (items.length === this.shelves.length) {
-            items.forEach((item, idx) => {
-                const badge = item.querySelector('.sort-order-badge');
-                if (badge) badge.textContent = SM_TEXT.badge_newSortOrder.replace('{n}', this.shelves[idx].sortOrder);
-                const originalBadge = item.querySelector('.original-priority-badge');
-                if (originalBadge && this.shelves[idx].originalPriority !== undefined) {
-                    originalBadge.textContent = this.shelves[idx].originalPriority !== null
-                        ? SM_TEXT.badge_originalPriority.replace('{n}', this.shelves[idx].originalPriority)
-                        : SM_TEXT.badge_originalPriorityNone;
-                }
-            });
-        }
-    }
-
+    /** 上移已勾选货架 */
     moveUpSelected() {
         let indices = this.getSelectedIndices();
         if (indices.length === 0) { this.app.showMessage(SM_TEXT.msg_selectShelvesFirst, 'warning'); return; }
@@ -314,6 +338,7 @@ class SortingModule {
         this.app.showMessage(SM_TEXT.msg_moveUpOk, 'success');
     }
 
+    /** 下移已勾选货架 */
     moveDownSelected() {
         let indices = this.getSelectedIndices();
         if (indices.length === 0) { this.app.showMessage(SM_TEXT.msg_selectShelvesFirst, 'warning'); return; }
@@ -331,6 +356,10 @@ class SortingModule {
         this.app.showMessage(SM_TEXT.msg_moveDownOk, 'success');
     }
 
+    /**
+     * 导出结果为 Excel
+     * @returns {Promise<void>}
+     */
     async exportResults() {
         if (!this.shelves.length) {
             this.app.showMessage(SM_TEXT.msg_nothingToExport, 'error');
@@ -352,7 +381,7 @@ class SortingModule {
                 });
             }
         }
-        const headers = SM_TEXT.exportHeaders;
+        const headers = CORE_HEADERS.locationChange;
         const sheetData = [headers];
         for (const row of exportRows) {
             const newRow = [];
@@ -373,8 +402,8 @@ class SortingModule {
         this.app.showMessage(SM_TEXT.msg_exportOk, 'success');
     }
 
+    /** 重置模块到初始状态 */
     resetModule() {
-        document.getElementById('smSortingFileInput').value = '';
         document.getElementById('smSortingResultArea').classList.add('hidden');
         const startInput = document.getElementById('smStartValue');
         const stepInput = document.getElementById('smStepValue');
@@ -387,6 +416,7 @@ class SortingModule {
         this.app.showMessage(SM_TEXT.msg_reset, 'info');
     }
 
+    /** 渲染货架列表 */
     renderShelfList() {
         const container = document.getElementById('smShelfListContainer');
         if (!container) return;
@@ -434,6 +464,7 @@ class SortingModule {
         this.restoreSelectedCodes();
     }
 
+    /** 初始化拖拽排序事件 */
     initDragAndDrop() {
         const items = document.querySelectorAll('#smSortingList .sorting-item');
         const handleDragStart = (e) => {
@@ -490,14 +521,18 @@ class SortingModule {
         });
     }
 
+    /** 刷新已选数量显示 */
     updateSelectedCount() {
         const count = this.getSelectedIndices().length;
         const span = document.getElementById('smSelectedCount');
         if (span) span.textContent = SM_TEXT.selectedCount.replace('{n}', count);
     }
 
+    /**
+     * 绑定面板事件
+     * @param {HTMLElement} panel
+     */
     bindEvents(panel) {
-        panel.querySelector('#smSortingUploadBtn')?.addEventListener('click', () => this.handleFileUpload());
         panel.querySelector('#smSortingMoveUpBtn')?.addEventListener('click', () => this.moveUpSelected());
         panel.querySelector('#smSortingMoveDownBtn')?.addEventListener('click', () => this.moveDownSelected());
         panel.querySelector('#smSortingExportBtn')?.addEventListener('click', () => this.exportResults());
@@ -519,19 +554,19 @@ class SortingModule {
         });
     }
 
+    // ==================== UI ====================
+
+    /** 渲染模块面板 */
     renderPanel(panel) {
         this.injectStyles();
         panel.innerHTML = `
             <div class="section">
-                <div class="table-header">
-                    <h2>${SM_TEXT.title}</h2>
-                    ${this.app.getHelpButton(this.id)}
-                </div>
-                <div class="form-group">
-                    <label for="smSortingFileInput">${SM_TEXT.label_upload}</label>
-                    <input type="file" id="smSortingFileInput" accept=".xls,.xlsx">
-                </div>
-                <button id="smSortingUploadBtn" class="btn">${this._iconCache.upload} ${SM_TEXT.btn_upload}</button>
+                ${this.app.uploadSection({
+                    title: SM_TEXT.title,
+                    moduleId: this.id,
+                    btnId: 'smSortingUploadBtn',
+                    btnLabel: SM_TEXT.btn_upload,
+                })}
             </div>
             <div id="smSortingResultArea" class="section hidden">
                 <div class="table-header"><h2>${SM_TEXT.heading_sort}</h2></div>
@@ -589,16 +624,18 @@ class SortingModule {
             });
         }
         this.bindEvents(panel);
+        this.app.bindUploadSection({btnId: 'smSortingUploadBtn',onFile: (file) => this.handleFileUpload(file),});
         this.app._log(`${this.title} 模块加载成功`);
     }
 }
+
+// ==================== 文案 ====================
 
 const SM_TEXT = {
     title: '整理动线',
     introText: '上传包含分拣位的货架数据，按货架整理分拣顺序，支持拖拽排序和批量移动，自动生成间隔10的分拣排序值。',
     helpDescription: '<p>上传导出的Excel文件（格式需包含"库位号"、"库位类型"、"分拣排序"、"所属仓库/库区"等字段）。</p><p>系统将自动提取库位号的前三段作为货架标识，筛选出所有"分拣位"库位，并按照原"分拣排序"值升序排列货架。</p><p>可拖拽调整货架顺序或使用多选按钮批量移动，最终按顺序每货架递增10生成新的"分拣排序"值。</p><p>导出结果仅填写"库位号"、"仓库名称"、"分拣排序"，其余字段留空，可直接用于批量更改。</p><p>也可通过"导入顺序(Excel)"或"按输入顺序排序"快速调整货架顺序。</p><p>可设置起始值和步长（默认10，可折叠）。</p>',
 
-    label_upload: '上传Excel文件 (含分拣位数据)',
     btn_upload: '上传并解析',
     heading_sort: '货架动线排序',
     tip_sort: '提示：已经按原"分拣排序"值升序排列货架。直接拖拽列表项可调整顺序，或勾选货架后点击【上移/下移】批量移动。最终每个货架下的所有库位将获得新的分拣排序值（步长10）。',
@@ -623,11 +660,9 @@ const SM_TEXT = {
     badge_originalPriorityNone: '原优先级: 无',
     badge_newSortOrder: '新分拣值: {n}',
 
-    exportHeaders: ['仓库名称', '库位号', '名称', '作为补入库位', '作为补出库位', '分拣排序', '上架排序', '逻辑区名称', '单独打包分区编号', '库位规格名称', '库位BAND', '批次码库位', '常温短保品库位'],
     exportSheetName: '批量更改',
     exportFileName: '分拣顺序调整_{ts}.xlsx',
 
-    msg_pleaseSelectFile: '请选择Excel文件',
     msg_parseSuccess: '文件解析成功，已加载分拣位数据',
     msg_parseFailed: '解析失败: ',
     msg_readFileFailed: '读取文件失败',
@@ -652,46 +687,35 @@ const SM_TEXT = {
     err_noShelfCodes: '未找到货架编码数据',
 
     styles: `.sorting-list{list-style:none;margin:0;padding:0}
-.sorting-item{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid #eee;background-color:#fff;cursor:grab;transition:background .15s}
-.sorting-item:hover{background:#fafafa}
+.sorting-item{display:flex;align-items:center;padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--border-soft);background-color:var(--bg-panel);cursor:grab;transition:background var(--t-fast)}
+.sorting-item:hover{background:var(--bg-sub)}
 .sorting-item.dragging{opacity:.5}
-.sorting-item.drag-over{background:#fff8e1}
-.sorting-item .drag-handle{font-size:20px;margin-right:16px;cursor:grab}
-.sorting-item .item-checkbox{margin-right:16px;width:20px;height:20px;flex-shrink:0}
-.sorting-item-content{flex:1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
-.shelf-code{font-weight:700;font-family:monospace;background:#f0f0f0;padding:4px 12px;border-radius:40px}
-.shelf-type-badge{background:#e0e0e0;color:#333;padding:4px 12px;border-radius:40px;font-size:12px}
-.original-priority-badge{background:#e0e0e0;color:#333;padding:4px 12px;border-radius:40px;font-size:12px}
-.sort-order-badge{background:#FFBD00;color:#1e2a3e;padding:4px 12px;border-radius:40px;font-weight:700}
-.sorting-list-wrapper{border:1px solid #e0e0e0;border-radius:16px;background:#fefefe;max-height:500px;overflow-y:auto}
-.sm-notice-bar{margin-bottom:12px}
-.sm-collapsible-wrap{margin-bottom:12px}
-.sm-collapsible-header{background:#f5f5f5;padding:10px 15px;border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
-.sm-collapsible-arrow{font-size:18px}
-.sm-collapsible-content{display:none;padding:15px;background:#fafafa;border-radius:10px;margin-top:8px}
-.sm-param-row{display:flex;gap:20px;flex-wrap:wrap}
+.sorting-item.drag-over{background:var(--accent-soft)}
+.sorting-item .drag-handle{font-size:20px;margin-right:var(--sp-4);cursor:grab;color:var(--text-muted)}
+.sorting-item .item-checkbox{margin-right:var(--sp-4);width:20px;height:20px;flex-shrink:0}
+.sorting-item-content{flex:1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--sp-2)}
+.shelf-code{font-weight:700;font-family:monospace;background:var(--bg-sub);color:var(--text-strong);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill)}
+.shelf-type-badge{background:var(--bg-sub);color:var(--text);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-xs)}
+.original-priority-badge{background:var(--bg-sub);color:var(--text);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);font-size:var(--fs-xs)}
+.sort-order-badge{background:var(--accent);color:#1e2a3e;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);font-weight:700}
+.sorting-list-wrapper{border:1px solid var(--border);border-radius:var(--r-lg);background:var(--bg-panel);max-height:500px;overflow-y:auto}
+.sm-notice-bar{margin-bottom:var(--sp-3)}
+.sm-collapsible-wrap{margin-bottom:var(--sp-3)}
+.sm-collapsible-header{background:var(--bg-sub);padding:var(--sp-3) var(--sp-4);border-radius:var(--r);cursor:pointer;display:flex;justify-content:space-between;align-items:center;color:var(--text-strong)}
+.sm-collapsible-arrow{font-size:var(--fs-lg)}
+.sm-collapsible-content{display:none;padding:var(--sp-4);background:var(--bg-sub);border-radius:var(--r);margin-top:var(--sp-2)}
+.sm-param-row{display:flex;gap:var(--sp-5);flex-wrap:wrap}
 .sm-param-item{flex:1}
 .sm-param-item label{font-weight:600}
 .sm-param-item input{width:100%}
-.sm-order-import{background:#f5f5f5;padding:15px;border-radius:12px;margin-bottom:16px}
-.sm-order-row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end}
+.sm-order-import{background:var(--bg-sub);padding:var(--sp-4);border-radius:var(--r);margin-bottom:var(--sp-4)}
+.sm-order-row{display:flex;flex-wrap:wrap;gap:var(--sp-5);align-items:flex-end}
 .sm-order-excel{flex:2;min-width:200px}
 .sm-order-text{flex:3;min-width:260px}
 .sm-order-text textarea{width:100%}
-.sm-actions{margin-bottom:16px;align-items:center}
-.sm-btn-sm{padding:6px 16px}
-.sm-foot-note{margin-top:12px;font-size:13px;color:#888}
-body.dark-mode .sorting-item{background-color:#2a2a36;border-bottom-color:#3a3a44}
-body.dark-mode .sorting-item:hover{background:#32323e}
-body.dark-mode .sorting-item.drag-over{background:#3a3a48}
-body.dark-mode .shelf-code{background:#3a3a48;color:#fff}
-body.dark-mode .shelf-type-badge{background:#3a3a48;color:#ddd}
-body.dark-mode .original-priority-badge{background:#3a3a48;color:#ddd}
-body.dark-mode .sort-order-badge{background:#FFBD00;color:#1e2a3e}
-body.dark-mode .sorting-list-wrapper{background:#2a2a36;border-color:#3a3a44}
-body.dark-mode .sm-collapsible-header{background:#2a2a36;color:#fff}
-body.dark-mode .sm-collapsible-content{background:#1e1e2a}
-body.dark-mode .sm-order-import{background:#252530}
-body.dark-mode .sm-foot-note{color:#999}`
+.sm-actions{margin-bottom:var(--sp-4);align-items:center}
+.sm-btn-sm{padding:var(--sp-2) var(--sp-4)}
+.sm-foot-note{margin-top:var(--sp-3);font-size:var(--fs-sm);color:var(--text-muted)}`
 };
+
 window.SortingModule = SortingModule;

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="https://icons.getbootstrap.com/assets/icons/qr-code.svg" type="image/svg+xml">
+<title>二维码及库位优化工具</title>
+</head>
+<body>
+<div id="boot-loading" style="text-align:center;padding:60px;color:#999">正在加载…</div>
+<script>
+window.__booted = false;
+setTimeout(function() {
+    if (!window.__booted) {
+        document.body.innerHTML = '<div style="text-align:center;padding:60px;font-family:sans-serif">'
+            + '<h1 style="color:#333;margin-bottom:20px">工具加载失败</h1>'
+            + '<p style="color:#666;margin-bottom:12px">请检查网络连接后刷新页面。</p>'
+            + '<p style="color:#666;margin-bottom:12px">如网络正常仍打不开，可能是公司网络拦截了 CDN。</p>'
+            + '<p style="color:#666">建议改用本地版：<a href="index.html" style="color:#FFA000">点这里</a></p>'
+            + '</div>';
+    }
+}, 8000);
+</script>
+<script src="https://cdn.jsdelivr.net/gh/cnwz/xxcs-tool@main/js/module/Core.js" data-mode="cloud"></script>
+<script src="https://cdn.jsdelivr.net/gh/cnwz/xxcs-tool@main/js/module/MultiQRCodeModule.js"></script>
+<script>
+const app = new Core();
+app.inlineModules.push(MultiQRCodeModule);
+app.init();
+window.__booted = true;
+</script>
+</body>
+</html>

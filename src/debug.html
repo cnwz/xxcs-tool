@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="https://icons.getbootstrap.com/assets/icons/qr-code.svg" type="image/svg+xml">
+<title>二维码及库位优化工具（调试版）</title>
+</head>
+<body>
+<div id="boot-loading" style="text-align:center;padding:60px;color:#999">正在加载…</div>
+<script>window.__BUSINESS_URL__ = 'http://12a.com/';</script>
+
+<script>
+window.__booted = false;
+setTimeout(function() {
+    if (!window.__booted) {
+        document.body.innerHTML = '<div style="text-align:center;padding:60px;font-family:sans-serif">'
+            + '<h1 style="color:#333;margin-bottom:20px">工具加载失败</h1>'
+            + '<p style="color:#666">请按 F12 打开控制台查看错误。</p>'
+            + '</div>';
+    }
+}, 8000);
+</script>
+<script src="js/module/Core.js"></script>
+<script>
+    Core.prototype._log = function(...args) {
+        console.log('[Core]', ...args);
+    };
+    // 开发版：不连 CDN，不拉清单，不检查更新
+    Core.prototype._handshake = function() {
+        this.handshakeDone = true;
+        this.cdnAlive = false;
+        return Promise.resolve(false);
+    };
+</script>
+<script src="js/module/MultiQRCodeModule.js"></script>
+<script>
+    const app = new Core();
+    app.inlineModules.push(MultiQRCodeModule);
+    app.init();
+    window.__booted = true;
+</script>
+</body>
+</html>

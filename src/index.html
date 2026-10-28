@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="https://icons.getbootstrap.com/assets/icons/qr-code.svg" type="image/svg+xml">
+<title>二维码及库位优化工具</title>
+</head>
+<body>
+<div id="boot-loading" style="text-align:center;padding:60px;color:#999">正在加载…</div>
+<script>
+window.__booted = false;
+setTimeout(function() {
+    if (!window.__booted) {
+        document.body.innerHTML = '<div style="text-align:center;padding:60px;font-family:sans-serif">'
+            + '<h1 style="color:#333;margin-bottom:20px">工具加载失败</h1>'
+            + '<p style="color:#666">核心文件缺失，请重新下载完整包。</p>'
+            + '</div>';
+    }
+}, 8000);
+</script>
+<!-- INLINE_BLOCK -->
+</body>
+</html>

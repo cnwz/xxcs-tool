@@ -1,26 +1,26 @@
 /**
  * @description 条码转键值Map模块
- * @author me@cnwz.me
+ * @author ls_wuzhen20
  * @since 2026-06-05
- * @lastupdate 2026-09-16
- * @version 1.0.0
- * @wiki https://gitee.com/{repo}/wikis/模块示例/条码转键值
- * @rules ./rules/BarcodeToMapModule.md
+ * @lastupdate 2026-09-21
+ * @version 2.0.0
+ * @wiki https://gitee.com/cnwz/xxcs-tool/wikis/开发/BarcodeToMapModule.md
+ * @license Unlicense
  * @security 本文件不收集、不存储、不传输任何用户数据。所有计算在浏览器本地完成。
  */
 class BarcodeToMapModule {
     constructor(app) {
         this.app = app;
         this.title = BT_TEXT.title;
-        this.ver = '1.0.0';
-        this.lastupdate = '2026-09-16';
+        this.ver = '2.0.0';
+        this.lastupdate = '2026-09-21';
         this.iconName = 'upc-scan';
         this.introText = BT_TEXT.introText;
         this.helpDescription = BT_TEXT.helpDescription;
         this._iconCache = {
             copy: this.app.getIcon('copy'),
             javascript: this.app.getIcon('javascript'),
-            fileEarmarkExcel: this.app.getIcon('file-earmark-excel'),
+            fileEarmarkExcel: this.app.getIcon('filetype-xlsx'),
         };
         this._uploadedData = null;
         this._currentColumns = null;
@@ -28,10 +28,16 @@ class BarcodeToMapModule {
         this._generatedCount = 0;
     }
 
+    /** 注入模块样式 */
     injectStyles() {
         this.app.injectStyle(this.id, BT_TEXT.styles);
     }
 
+    /**
+     * 解析单行文本为条码/名称对
+     * @param {string} line
+     * @returns {{code:string,name:string}|null}
+     */
     _parseLine(line) {
         line = line.trim();
         if (!line) return null;
@@ -51,15 +57,21 @@ class BarcodeToMapModule {
         }
     }
 
-    _buildMapEntry(row) {
-        return `[${JSON.stringify(row.code)}, ${JSON.stringify(row.name)}]`;
-    }
-
+    /**
+     * 单行数据转换为数组项字符串
+     * @param {{code:string,name:string,fresh:string}} row
+     * @returns {string}
+     */
     _buildArrayEntry(row) {
         const freshVal = (row.fresh === '是' || row.fresh.toLowerCase() === 'true') ? '是' : '';
-        return `[${JSON.stringify(row.code)}, ${JSON.stringify(row.name)}, ${JSON.stringify(freshVal)}]`;
+        const cleanName = String(row.name).replace(/\s+/g, '');
+        return `[${JSON.stringify(row.code)}, ${JSON.stringify(cleanName)}, ${JSON.stringify(freshVal)}]`;
     }
 
+    /**
+     * 汇总当前数据源（Excel 或文本）为标准行数组
+     * @returns {Array<{code:string,name:string,fresh:string}>}
+     */
     _getDataRows() {
         const textarea = document.getElementById('btBarcodeRawData');
         if (this._uploadedData && this._currentColumns) {
@@ -89,7 +101,8 @@ class BarcodeToMapModule {
         }
     }
 
-    _generate(isArray) {
+    /** 生成 productMap 数组代码，预览前 50 行 */
+    _generate() {
         const rows = this._getDataRows();
         const outputPre = document.getElementById('btMapOutputCode');
         if (rows.length === 0) {
@@ -99,30 +112,27 @@ class BarcodeToMapModule {
             this.app.showMessage(BT_TEXT.msg_noData, 'error');
             return;
         }
-        const buildEntry = isArray ? (r) => this._buildArrayEntry(r) : (r) => this._buildMapEntry(r);
-        const fullEntries = rows.map(buildEntry).join(',\n');
-        const fullCode = isArray
-            ? `window.productMapData = [\n${fullEntries}\n];`
-            : `window.productMapData = new Map([\n${fullEntries}\n]);`;
+        const fullEntries = rows.map(r => this._buildArrayEntry(r)).join(',\n');
+        const fullCode = `window.productMapData = [\n${fullEntries}\n];`;
         this._generatedCode = fullCode;
         this._generatedCount = rows.length;
 
         const previewRows = rows.slice(0, 50);
-        const previewEntries = previewRows.map(buildEntry).join(',\n');
+        const previewEntries = previewRows.map(r => this._buildArrayEntry(r)).join(',\n');
         const suffix = rows.length > 50
             ? `\n// ... 省略 ${rows.length - 50} 行（复制/导出包含全部 ${rows.length} 条数据）`
             : '';
-        const previewCode = isArray
-            ? `window.productMapData = [\n${previewEntries}${suffix}\n];`
-            : `window.productMapData = new Map([\n${previewEntries}${suffix}\n]);`;
+        const previewCode = `window.productMapData = [\n${previewEntries}${suffix}\n];`;
         if (outputPre) outputPre.textContent = previewCode;
 
-        const msg = isArray
-            ? BT_TEXT.msg_genNewArrayOk.replace('{n}', rows.length)
-            : BT_TEXT.msg_genOldMapOk.replace('{n}', rows.length);
-        this.app.showMessage(msg, 'success');
+        this.app.showMessage(BT_TEXT.msg_genNewArrayOk.replace('{n}', rows.length), 'success');
     }
 
+    /**
+     * 处理上传的 Excel 文件，填充列选择器
+     * @param {File} file
+     * @returns {Promise<void>}
+     */
     async _handleExcelFile(file) {
         const uploadStatus = document.getElementById('btUploadStatus');
         const columnSelector = document.getElementById('btExcelColumnSelector');
@@ -131,55 +141,51 @@ class BarcodeToMapModule {
         const freshColSelect = document.getElementById('btFreshColSelect');
         const textarea = document.getElementById('btBarcodeRawData');
 
-        try {
-            const jsonData = await this.app.readExcel(file);
-            if (jsonData.length < 2) {
-                this.app.showMessage(BT_TEXT.msg_emptyFile, 'error');
-                return;
-            }
-            if (jsonData.length > 50000) {
-                this.app.showMessage('数据超过 5 万行，请拆分后上传', 'error');
-                return;
-            }
-            const headers = jsonData[0].map(h => String(h).trim());
-            const rows = jsonData.slice(1);
-            this._uploadedData = rows;
-            codeColSelect.innerHTML = '';
-            nameColSelect.innerHTML = '';
-            freshColSelect.innerHTML = `<option value="">${BT_TEXT.opt_none}</option>`;
-            headers.forEach((h, idx) => {
-                const opt1 = document.createElement('option');
-                opt1.value = idx;
-                opt1.textContent = h || `${BT_TEXT.opt_colPrefix}${idx + 1}`;
-                codeColSelect.appendChild(opt1);
-                nameColSelect.appendChild(opt1.cloneNode(true));
-                freshColSelect.appendChild(opt1.cloneNode(true));
-            });
-            const guessIndex = (keywords) => {
-                for (const kw of keywords) {
-                    const lower = kw.toLowerCase();
-                    for (let i = 0; i < headers.length; i++) {
-                        if (headers[i].toLowerCase().includes(lower)) return i;
-                    }
+        const table = await this.app.readExcelTable(file, {
+            emptyMessage: BT_TEXT.msg_emptyFile,
+            parseErrorMessage: BT_TEXT.msg_parseExcelFailed,
+        });
+        if (!table) return;
+
+        const { headers, rows } = table;
+        this._uploadedData = rows;
+
+        codeColSelect.innerHTML = '';
+        nameColSelect.innerHTML = '';
+        freshColSelect.innerHTML = `<option value="">${BT_TEXT.opt_none}</option>`;
+        headers.forEach((h, idx) => {
+            const opt1 = document.createElement('option');
+            opt1.value = idx;
+            opt1.textContent = h || `${BT_TEXT.opt_colPrefix}${idx + 1}`;
+            codeColSelect.appendChild(opt1);
+            nameColSelect.appendChild(opt1.cloneNode(true));
+            freshColSelect.appendChild(opt1.cloneNode(true));
+        });
+        const guessIndex = (keywords) => {
+            for (const kw of keywords) {
+                const lower = kw.toLowerCase();
+                for (let i = 0; i < headers.length; i++) {
+                    if (headers[i].toLowerCase().includes(lower)) return i;
                 }
-                return -1;
-            };
-            const codeGuess = guessIndex(['条码', '编码', 'code', '商品码']);
-            const nameGuess = guessIndex(['商品', '名称', 'name', '品名']);
-            if (codeGuess >= 0) codeColSelect.value = codeGuess;
-            if (nameGuess >= 0) nameColSelect.value = nameGuess;
-            columnSelector.style.display = 'block';
-            if (textarea) textarea.style.display = 'none';
-            if (uploadStatus) uploadStatus.textContent = BT_TEXT.msg_uploaded.replace('{file}', file.name).replace('{n}', rows.length);
-            this.app.showMessage(BT_TEXT.msg_parseOk.replace('{n}', rows.length), 'success');
-        } catch (err) {
-            this.app.showMessage(BT_TEXT.msg_parseExcelFailed + err.message, 'error');
-        }
+            }
+            return -1;
+        };
+        const codeGuess = guessIndex(['条码', '编码', 'code', '商品码']);
+        const nameGuess = guessIndex(['商品', '名称', 'name', '品名']);
+        if (codeGuess >= 0) codeColSelect.value = codeGuess;
+        if (nameGuess >= 0) nameColSelect.value = nameGuess;
+        columnSelector.style.display = 'block';
+        if (textarea) textarea.style.display = 'none';
+        if (uploadStatus) uploadStatus.textContent = BT_TEXT.msg_uploaded.replace('{file}', file.name).replace('{n}', rows.length);
+        this.app.showMessage(BT_TEXT.msg_parseOk.replace('{n}', rows.length), 'success');
     }
 
+    /**
+     * 绑定面板内所有事件
+     * @param {HTMLElement} panel
+     */
     _bindEvents(panel) {
         const textarea = panel.querySelector('#btBarcodeRawData');
-        const generateOldBtn = panel.querySelector('#btGenerateOldMapBtn');
         const generateNewBtn = panel.querySelector('#btGenerateNewArrayBtn');
         const copyBtn = panel.querySelector('#btCopyMapCodeBtn');
         const saveBtn = panel.querySelector('#btSaveMapJsBtn');
@@ -191,9 +197,9 @@ class BarcodeToMapModule {
         const nameColSelect = panel.querySelector('#btNameColSelect');
         const freshColSelect = panel.querySelector('#btFreshColSelect');
         const applyColBtn = panel.querySelector('#btApplyColumnSelectionBtn');
+        const switchToTextBtn = panel.querySelector('#btSwitchToTextBtn');
 
-        generateOldBtn.addEventListener('click', () => this._generate(false));
-        generateNewBtn.addEventListener('click', () => this._generate(true));
+        generateNewBtn.addEventListener('click', () => this._generate());
 
         copyBtn.addEventListener('click', async () => {
             if (!this._generatedCode) {
@@ -224,7 +230,7 @@ class BarcodeToMapModule {
             columnSelector.style.display = 'none';
             if (uploadStatus) uploadStatus.textContent = '';
             textarea.style.display = '';
-            this._generate(false);
+            this._generate();
         });
 
         uploadBtn.addEventListener('click', async () => {
@@ -247,12 +253,24 @@ class BarcodeToMapModule {
             }
             this._currentColumns = { codeCol: codeIdx, nameCol: nameIdx, freshCol: freshIdx };
             this.app.showMessage(BT_TEXT.msg_colApplied, 'success');
-            this._generate(false);
+            this._generate();
+        });
+
+        switchToTextBtn.addEventListener('click', () => {
+            this._uploadedData = null;
+            this._currentColumns = null;
+            columnSelector.style.display = 'none';
+            if (uploadStatus) uploadStatus.textContent = '';
+            if (textarea) textarea.style.display = '';
+            this.app.showMessage(BT_TEXT.msg_switchedToText, 'info');
         });
 
         if (!textarea.value) loadExampleBtn.click();
     }
 
+    // ==================== UI ====================
+
+    /** 渲染模块面板 */
     renderPanel(panel) {
         this.injectStyles();
         panel.innerHTML = `
@@ -276,11 +294,11 @@ class BarcodeToMapModule {
                                 <label>${BT_TEXT.label_freshCol}<select id="btFreshColSelect"><option value="">${BT_TEXT.opt_none}</option></select></label>
                             </div>
                             <button id="btApplyColumnSelectionBtn" class="btn btn-success">${BT_TEXT.btn_applyColumns}</button>
+                            <button id="btSwitchToTextBtn" class="btn btn-secondary">${BT_TEXT.btn_switchToText}</button>
                         </div>
                     </div>
                 </div>
                 <div class="btn-row">
-                    <button id="btGenerateOldMapBtn" class="btn btn-secondary">${BT_TEXT.btn_genOldMap}</button>
                     <button id="btGenerateNewArrayBtn" class="btn btn-success">${BT_TEXT.btn_genNewArray}</button>
                 </div>
                 <div class="form-group">
@@ -297,9 +315,11 @@ class BarcodeToMapModule {
     }
 }
 
+// ==================== 文案 ====================
+
 const BT_TEXT = {
     title: '条码转键值',
-    introText: '将条码/商品对应表转为JS Map或数组，支持Excel上传，可生成新旧两种格式。',
+    introText: '将条码/商品对应表转为商品库数组，支持Excel上传。',
     helpDescription: '粘贴包含条码和商品名称的文本 (支持制表符/空格/逗号分隔)，或上传Excel文件。点击生成获得代码，可复制或保存为productMap.js文件。',
 
     heading: '条码转键值',
@@ -315,8 +335,8 @@ const BT_TEXT = {
     opt_none: '无',
     opt_colPrefix: '列',
     btn_applyColumns: '应用选择',
-    btn_genOldMap: '生成旧版Map (纯键值)',
-    btn_genNewArray: '生成新版数组 (含当日鲜列)',
+    btn_switchToText: '切换回文本输入',
+    btn_genNewArray: '生成商品库',
     label_output: '生成的代码 (预览前50行，超出显示…，复制/导出为全部数据)',
     outputPlaceholder: '// 点击生成按钮后显示结果',
     btn_copyCode: '复制代码',
@@ -324,8 +344,7 @@ const BT_TEXT = {
 
     msg_noData: '没有有效数据',
     msg_noDataOutput: '// 没有有效数据，请检查输入或上传文件。',
-    msg_genOldMapOk: '生成旧版Map，共 {n} 条（已复制/导出为全部数据）',
-    msg_genNewArrayOk: '生成新版数组，共 {n} 条（已复制/导出为全部数据）',
+    msg_genNewArrayOk: '生成商品库数组，共 {n} 条',
     msg_nothingToCopy: '没有可复制的代码，请先生成',
     msg_copied: '代码已复制到剪贴板（共 {n} 条）',
     msg_copyFailed: '复制失败',
@@ -337,11 +356,12 @@ const BT_TEXT = {
     msg_uploaded: '已上传: {file} ({n}行数据)',
     msg_selectDiffCol: '请选择不同的列',
     msg_colApplied: '列选择已应用，可生成',
+    msg_switchedToText: '已切换回文本输入模式',
 
     exampleData: `12345\t富士苹果\n67890\t泰国香蕉\n54321\t赣南脐橙\n6901234567890\t蒙牛纯牛奶\n6971234567890123\t农夫山泉矿泉水\n888888\t原味薯片`,
 
-    styles: `.bt-column-selects{display:flex;gap:12px;flex-wrap:wrap}
-.code-output{background:#f6f8fa;color:#24292f;border:1px solid #e1e4e8;padding:16px;border-radius:10px;overflow-x:auto;font-size:13px;white-space:pre-wrap;max-height:300px;font-family:Consolas,Monaco,"Courier New",monospace;line-height:1.5;margin:0}
-body.dark-mode .code-output{background:#1e1e2a;color:#e0e4e8;border-color:#3a3a44}`
+        styles: `.bt-column-selects{display:flex;gap:var(--sp-3);flex-wrap:wrap}
+.code-output{background:var(--bg-sub);color:var(--text-strong);border:1px solid var(--border);padding:var(--sp-4);border-radius:var(--r);overflow-x:auto;font-size:var(--fs-sm);white-space:pre-wrap;max-height:300px;font-family:Consolas,Monaco,"Courier New",monospace;line-height:1.5;margin:0}`
 };
+
 window.BarcodeToMapModule = BarcodeToMapModule;
